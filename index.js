@@ -25,17 +25,19 @@ app.post('/webhook', async (req, res) => {
         const userMessage = event.message.text;
         try {
           const aiResponse = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+            'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
             {
-              contents: [
-                {
-                  parts: [
-                    {
-                      text: `Bạn là trợ lý AI của Công ty Cổ phần Nhựa Chất Lượng Cao Bình Thuận (BQP). Hãy trả lời lịch sự, chuyên nghiệp bằng tiếng Việt. Hỗ trợ khách hàng về sản phẩm nhựa chất lượng cao.\n\nKhách hàng hỏi: ${userMessage}`
-                    }
-                  ]
-                }
-              ]
+              contents: [{
+                parts: [{
+                  text: `Bạn là trợ lý AI của Công ty Cổ phần Nhựa Chất Lượng Cao Bình Thuận (BQP). Trả lời lịch sự, chuyên nghiệp bằng tiếng Việt.\n\nKhách hàng: ${userMessage}`
+                }]
+              }]
+            },
+            {
+              headers: {
+                'x-goog-api-key': GEMINI_API_KEY,
+                'Content-Type': 'application/json'
+              }
             }
           );
           const reply = aiResponse.data.candidates[0].content.parts[0].text;
@@ -44,7 +46,7 @@ app.post('/webhook', async (req, res) => {
             { recipient: { id: senderId }, message: { text: reply } }
           );
         } catch (err) {
-          console.error(err.message);
+          console.error(err.response ? JSON.stringify(err.response.data) : err.message);
         }
       }
     }
