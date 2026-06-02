@@ -7,6 +7,12 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
+// Lưu hội thoại + thời điểm nhắn cuối theo từng khách
+const conversations = {};
+const lastSeen = {};
+const MAX_HISTORY = 12;
+const RESET_GAP_MS = 6 * 60 * 60 * 1000; // 6 tiếng không nhắn -> coi như phiên mới, được chào lại
+
 const SYSTEM_PROMPT = `Bạn tên là Thuận, là nhân viên tư vấn (xưng "em") của Công ty Cổ phần Nhựa Chất Lượng Cao Bình Thuận (BQP) – thành viên Tập đoàn Nhựa Bình Thuận (BPG). Bạn am hiểu về gia công chi tiết nhựa kỹ thuật cao (OEM).
 
 ĐỊNH VỊ CỐT LÕI CỦA BQP:
@@ -39,33 +45,55 @@ LIÊN HỆ:
 
 QUY TẮC TRẢ LỜI:
 - Xưng "em", tên là Thuận.
-- Lần đầu chưa biết giới tính khách thì gọi "Quý khách". Sau đó phải TỰ SUY ĐOÁN để gọi "anh" hoặc "chị" dựa vào: tên khách (vd Tuấn/Hùng/Nam → anh; Lan/Hương/Trang → chị), hoặc cách khách tự xưng. TUYỆT ĐỐI KHÔNG ĐƯỢC HỎI giới tính hay cách xưng hô. Nếu không đoán được thì dùng "Quý khách" hoặc "mình".
-- Trả lời TỰ NHIÊN như người thật đang nhắn tin, thân thiện, gần gũi, KHÔNG máy móc. Tránh lặp lại câu chào rập khuôn.
-- TRẢ LỜI NGẮN GỌN, đi thẳng trọng tâm, tối đa 2-3 câu. Không liệt kê dài dòng trừ khi khách yêu cầu.
-- Khi nói về đối tác: chỉ nói chung "các doanh nghiệp lớn trong nước, doanh nghiệp FDI và đối tác quốc tế". TUYỆT ĐỐI KHÔNG nêu tên cụ thể đối tác nào.
-- Khi khách hỏi gia công OEM chi tiết nhựa: khẳng định BQP làm được, nhắc đã hợp tác nhiều doanh nghiệp lớn trong nước và quốc tế.
-- Khi khách hỏi pallet, thùng, chậu, khuôn: cho biết thuộc hệ sinh thái Tập đoàn BPG và BQP nhận gia công.
-- Khi khách hỏi cổ phiếu, niêm yết, đầu tư: cho biết BQP đã niêm yết trên UPCoM (mã BQP) và mời xem mục Quan hệ cổ đông tại bqp.com.vn.
+- Dựa vào lịch sử hội thoại để hiểu ngữ cảnh, không hỏi lại thông tin khách đã cung cấp.
+- Lần đầu chưa biết giới tính khách thì gọi "Quý khách". Sau đó TỰ SUY ĐOÁN gọi "anh" hoặc "chị" dựa vào tên hoặc cách khách tự xưng. TUYỆT ĐỐI KHÔNG HỎI giới tính/cách xưng hô. Không đoán được thì dùng "Quý khách" hoặc "mình".
+- Trả lời TỰ NHIÊN như người thật đang nhắn tin, thân thiện, gần gũi, KHÔNG máy móc.
+- TRẢ LỜI NGẮN GỌN, tối đa 2-3 câu. Không liệt kê dài dòng trừ khi khách yêu cầu.
+- Khi nói về đối tác: chỉ nói chung "doanh nghiệp lớn trong nước, doanh nghiệp FDI và đối tác quốc tế". KHÔNG nêu tên đối tác cụ thể.
+- Khách hỏi pallet, thùng, chậu, khuôn: cho biết thuộc hệ sinh thái Tập đoàn BPG và BQP nhận gia công.
+- Khách hỏi cổ phiếu, niêm yết: cho biết BQP đã niêm yết trên UPCoM (mã BQP), mời xem mục Quan hệ cổ đông tại bqp.com.vn.
 - BQP CHỈ làm chi tiết nhựa. Hỏi gì không phải nhựa thì lịch sự nói không thuộc lĩnh vực của BQP.
 - Hỏi giá/số lượng/đặt hàng: mời liên hệ Hotline 1800 2228 hoặc email info@nhuabinhthuan.com.vn để báo giá.
 - KHÔNG bịa giá. Chưa rõ nhu cầu thì mời khách để lại số điện thoại để nhân viên gọi lại.`;
 
-async function askGemini(userMessage) {
+async function askGemini(senderId, userMessage) {
+  const now = Date.now();
+  const gap = lastSeen[senderId] ? (now - lastSeen[senderId]) : Infinity;
+  lastSeen[senderId] = now;
+
+  // Nếu cách lần nhắn trước quá lâu -> reset, coi như phiên mới
+  if (gap > RESET_GAP_MS) {
+    conversations[senderId] = [];
+  }
+  if (!conversations[senderId]) conversations[senderId] = [];
+  const history = conversations[senderId];
+
+  const isNewSession = history.length === 0;
+
+  // Chỉ thị động về việc chào
+  const greetingRule = isNewSession
+    ? '\n\n[Hệ thống: Đây là tin nhắn MỞ ĐẦU một phiên trò chuyện mới. Hãy chào khách một cách tự nhiên rồi trả lời.]'
+    : '\n\n[Hệ thống: Cuộc trò chuyện đang TIẾP DIỄN. TUYỆT ĐỐI KHÔNG chào lại, trả lời thẳng vào nội dung như đang nói chuyện liên tục.]';
+
+  history.push({ role: 'user', parts: [{ text: userMessage }] });
+  if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
+
+  const contents = [
+    { role: 'user', parts: [{ text: SYSTEM_PROMPT + greetingRule }] },
+    { role: 'model', parts: [{ text: 'Dạ vâng, em là Thuận, em đã sẵn sàng hỗ trợ ạ.' }] },
+    ...history
+  ];
+
   for (let i = 0; i < 3; i++) {
     try {
       const aiResponse = await axios.post(
         'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
-        {
-          contents: [{ parts: [{ text: SYSTEM_PROMPT + '\n\nKhách hàng: ' + userMessage }] }]
-        },
-        {
-          headers: {
-            'x-goog-api-key': GEMINI_API_KEY,
-            'Content-Type': 'application/json'
-          }
-        }
+        { contents },
+        { headers: { 'x-goog-api-key': GEMINI_API_KEY, 'Content-Type': 'application/json' } }
       );
-      return aiResponse.data.candidates[0].content.parts[0].text;
+      const reply = aiResponse.data.candidates[0].content.parts[0].text;
+      history.push({ role: 'model', parts: [{ text: reply }] });
+      return reply;
     } catch (err) {
       const code = err.response ? err.response.status : null;
       if (code === 503 && i < 2) {
@@ -93,7 +121,7 @@ app.post('/webhook', async (req, res) => {
       const event = entry.messaging[0];
       const senderId = event.sender.id;
       if (event.message && event.message.text) {
-        const reply = await askGemini(event.message.text);
+        const reply = await askGemini(senderId, event.message.text);
         try {
           await axios.post(
             `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
