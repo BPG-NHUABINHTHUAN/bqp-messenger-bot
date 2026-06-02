@@ -5,9 +5,8 @@ app.use(express.json());
 
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// Webhook verification
 app.get('/webhook', (req, res) => {
   if (req.query['hub.verify_token'] === VERIFY_TOKEN) {
     res.send(req.query['hub.challenge']);
@@ -16,7 +15,6 @@ app.get('/webhook', (req, res) => {
   }
 });
 
-// Receive messages
 app.post('/webhook', async (req, res) => {
   const body = req.body;
   if (body.object === 'page') {
@@ -27,21 +25,20 @@ app.post('/webhook', async (req, res) => {
         const userMessage = event.message.text;
         try {
           const aiResponse = await axios.post(
-            'https://api.openai.com/v1/chat/completions',
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
             {
-              model: 'gpt-4o-mini',
-              messages: [
+              contents: [
                 {
-                  role: 'system',
-                  content: 'Bạn là trợ lý AI của Công ty Cổ phần Nhựa Chất Lượng Cao Bình Thuận (BQP). Hãy trả lời lịch sự, chuyên nghiệp bằng tiếng Việt. Hỗ trợ khách hàng về sản phẩm nhựa chất lượng cao.'
-                },
-                { role: 'user', content: userMessage }
-              ],
-              max_tokens: 500
-            },
-            { headers: { Authorization: `Bearer ${OPENAI_API_KEY}` } }
+                  parts: [
+                    {
+                      text: `Bạn là trợ lý AI của Công ty Cổ phần Nhựa Chất Lượng Cao Bình Thuận (BQP). Hãy trả lời lịch sự, chuyên nghiệp bằng tiếng Việt. Hỗ trợ khách hàng về sản phẩm nhựa chất lượng cao.\n\nKhách hàng hỏi: ${userMessage}`
+                    }
+                  ]
+                }
+              ]
+            }
           );
-          const reply = aiResponse.data.choices[0].message.content;
+          const reply = aiResponse.data.candidates[0].content.parts[0].text;
           await axios.post(
             `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
             { recipient: { id: senderId }, message: { text: reply } }
