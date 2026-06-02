@@ -7,11 +7,10 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// Lưu hội thoại + thời điểm nhắn cuối theo từng khách
 const conversations = {};
 const lastSeen = {};
 const MAX_HISTORY = 12;
-const RESET_GAP_MS = 6 * 60 * 60 * 1000; // 6 tiếng không nhắn -> coi như phiên mới, được chào lại
+const RESET_GAP_MS = 6 * 60 * 60 * 1000;
 
 const SYSTEM_PROMPT = `Bạn tên là Thuận, là nhân viên tư vấn (xưng "em") của Công ty Cổ phần Nhựa Chất Lượng Cao Bình Thuận (BQP) – thành viên Tập đoàn Nhựa Bình Thuận (BPG). Bạn am hiểu về gia công chi tiết nhựa kỹ thuật cao (OEM).
 
@@ -61,7 +60,6 @@ async function askGemini(senderId, userMessage) {
   const gap = lastSeen[senderId] ? (now - lastSeen[senderId]) : Infinity;
   lastSeen[senderId] = now;
 
-  // Nếu cách lần nhắn trước quá lâu -> reset, coi như phiên mới
   if (gap > RESET_GAP_MS) {
     conversations[senderId] = [];
   }
@@ -69,8 +67,6 @@ async function askGemini(senderId, userMessage) {
   const history = conversations[senderId];
 
   const isNewSession = history.length === 0;
-
-  // Chỉ thị động về việc chào
   const greetingRule = isNewSession
     ? '\n\n[Hệ thống: Đây là tin nhắn MỞ ĐẦU một phiên trò chuyện mới. Hãy chào khách một cách tự nhiên rồi trả lời.]'
     : '\n\n[Hệ thống: Cuộc trò chuyện đang TIẾP DIỄN. TUYỆT ĐỐI KHÔNG chào lại, trả lời thẳng vào nội dung như đang nói chuyện liên tục.]';
@@ -87,7 +83,7 @@ async function askGemini(senderId, userMessage) {
   for (let i = 0; i < 3; i++) {
     try {
       const aiResponse = await axios.post(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent',
         { contents },
         { headers: { 'x-goog-api-key': GEMINI_API_KEY, 'Content-Type': 'application/json' } }
       );
