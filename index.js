@@ -3,7 +3,6 @@ const axios = require('axios');
 const app = express();
 app.use(express.json());
 
-// Cho phép website gọi tới server (CORS)
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
@@ -14,7 +13,7 @@ app.use((req, res, next) => {
 
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 const conversations = {};
 const lastSeen = {};
@@ -30,7 +29,6 @@ QUY TẮC NGÔN NGỮ (RẤT QUAN TRỌNG):
 - Hãy TỰ ĐỘNG NHẬN DIỆN ngôn ngữ khách đang dùng và TRẢ LỜI BẰNG ĐÚNG NGÔN NGỮ ĐÓ một cách tự nhiên, chuẩn xác như người bản xứ.
 - Khách viết tiếng nào → trả lời tiếng đó. Nếu khách đổi ngôn ngữ giữa chừng, lập tức chuyển theo ngôn ngữ mới.
 - Xưng hô tiếng Việt: xưng "em", gọi "Quý khách / anh / chị". Ngôn ngữ khác: dùng cách xưng hô lịch sự, chuyên nghiệp phù hợp văn hóa nước đó.
-- Mọi thông tin sản phẩm, năng lực, liên hệ giữ nguyên ý nghĩa, chỉ dịch sang ngôn ngữ phù hợp.
 
 CẤU TRÚC HỆ SINH THÁI TẬP ĐOÀN NHỰA BÌNH THUẬN (BPG):
 A. SẢN XUẤT:
@@ -54,7 +52,7 @@ NĂNG LỰC:
 
 QUY TẮC DÙNG TỪ "GIA CÔNG" (RẤT QUAN TRỌNG):
 - CHỈ dùng từ "gia công" cho: chi tiết nhựa OEM/ODM, chi tiết nhựa kỹ thuật cao theo yêu cầu.
-- TUYỆT ĐỐI KHÔNG dùng từ "gia công" cho: pallet, thùng nhựa, thùng rác, chậu hoa, sản phẩm nông nghiệp, khuôn (mould). Không bao giờ nói "bên em gia công pallet/chậu/khuôn".
+- TUYỆT ĐỐI KHÔNG dùng từ "gia công" cho: pallet, thùng nhựa, thùng rác, chậu hoa, sản phẩm nông nghiệp, khuôn (mould).
 
 QUY TẮC KHI KHÁCH HỎI VỀ: pallet, thùng nhựa, chậu, khuôn, logistics, tái chế, hoặc hệ sinh thái tổng thể:
 - Trả lời theo hướng: BQP là thành viên thuộc Tập đoàn Nhựa Bình Thuận (BPG), hoạt động trong hệ sinh thái sản xuất và dịch vụ nhựa toàn diện, rồi điều hướng khách về Fanpage Tập đoàn: https://www.facebook.com/nhuabinhthuan
@@ -65,31 +63,44 @@ LIÊN HỆ:
 
 QUY TẮC GIAO TIẾP:
 - Dựa vào lịch sử để hiểu ngữ cảnh, không hỏi lại điều khách đã nói.
-- Tiếng Việt: lần đầu gọi "Quý khách", sau đó TỰ SUY ĐOÁN gọi "anh"/"chị" dựa vào tên hoặc cách khách xưng. KHÔNG HỎI giới tính. Không đoán được thì dùng "Quý khách"/"mình".
+- Tiếng Việt: lần đầu gọi "Quý khách", sau đó TỰ SUY ĐOÁN gọi "anh"/"chị" dựa vào tên hoặc cách khách xưng. KHÔNG HỎI giới tính.
 - Trả lời TỰ NHIÊN, thân thiện, NGẮN GỌN tối đa 2-3 câu.
 - Khi nói về đối tác: chỉ nói chung "doanh nghiệp lớn trong nước, FDI và quốc tế". KHÔNG nêu tên cụ thể.
 - Hỏi giá/số lượng/đặt hàng: mời liên hệ Hotline 1800 2228 hoặc email info@nhuabinhthuan.com.vn.
 - KHÔNG bịa giá. Chưa rõ nhu cầu thì mời khách để lại số điện thoại để nhân viên gọi lại.`;
 
-async function callGemini(contents) {
+async function callAI(messages) {
   for (let i = 0; i < 3; i++) {
     try {
       const r = await axios.post(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent',
-        { contents },
-        { headers: { 'x-goog-api-key': GEMINI_API_KEY, 'Content-Type': 'application/json' } }
+        'https://api.groq.com/openai/v1/chat/completions',
+        {
+          model: 'llama-3.3-70b-versatile',
+          messages: messages,
+          max_tokens: 500,
+          temperature: 0.7
+        },
+        {
+          headers: {
+            'Authorization': 'Bearer ' + GROQ_API_KEY,
+            'Content-Type': 'application/json'
+          }
+        }
       );
-      return r.data.candidates[0].content.parts[0].text;
+      return r.data.choices[0].message.content;
     } catch (err) {
       const code = err.response ? err.response.status : null;
-      if (code === 503 && i < 2) { await new Promise(r => setTimeout(r, 2000)); continue; }
+      if ((code === 429 || code === 503) && i < 2) {
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
+      }
       console.error(err.response ? JSON.stringify(err.response.data) : err.message);
       return null;
     }
   }
 }
 
-async function askGemini(sessionId, userMessage, channel) {
+async function askAI(sessionId, userMessage) {
   const now = Date.now();
   const gap = lastSeen[sessionId] ? (now - lastSeen[sessionId]) : Infinity;
   lastSeen[sessionId] = now;
@@ -99,50 +110,47 @@ async function askGemini(sessionId, userMessage, channel) {
   const history = conversations[sessionId];
 
   const isNewSession = history.length === 0;
-  const greetingRule = isNewSession
-    ? '\n\n[Hệ thống: Tin nhắn MỞ ĐẦU phiên mới. Hãy chào tự nhiên (đúng ngôn ngữ khách) rồi trả lời.]'
-    : '\n\n[Hệ thống: Cuộc trò chuyện đang TIẾP DIỄN. KHÔNG chào lại, trả lời thẳng nội dung.]';
+  const greetingNote = isNewSession
+    ? ' [Tin nhắn MỞ ĐẦU phiên mới. Hãy chào tự nhiên đúng ngôn ngữ khách rồi trả lời.]'
+    : ' [Cuộc trò chuyện đang TIẾP DIỄN. KHÔNG chào lại, trả lời thẳng nội dung.]';
 
-  history.push({ role: 'user', parts: [{ text: userMessage }] });
+  history.push({ role: 'user', content: userMessage });
   if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
 
-  const contents = [
-    { role: 'user', parts: [{ text: SYSTEM_PROMPT + greetingRule }] },
-    { role: 'model', parts: [{ text: 'OK, tôi là Thuận/Thomas, sẵn sàng hỗ trợ đa ngôn ngữ.' }] },
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPT + greetingNote },
     ...history
   ];
 
-  const reply = await callGemini(contents);
+  const reply = await callAI(messages);
   const finalReply = reply || 'Dạ em xin lỗi, hệ thống đang bận. Quý khách vui lòng thử lại sau ít phút hoặc gọi Hotline 1800 2228 ạ.';
-  if (reply) history.push({ role: 'model', parts: [{ text: reply }] });
+  if (reply) history.push({ role: 'assistant', content: reply });
   return finalReply;
 }
 
 async function sendText(senderId, text) {
   try {
     await axios.post(
-      `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-      { recipient: { id: senderId }, message: { text } }
+      'https://graph.facebook.com/v18.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN,
+      { recipient: { id: senderId }, message: { text: text } }
     );
   } catch (err) {
     console.error(err.response ? JSON.stringify(err.response.data) : err.message);
   }
 }
 
-// ===== CỬA CHO WEBSITE: /chat =====
 app.post('/chat', async (req, res) => {
   try {
     const { sessionId, message } = req.body;
     if (!sessionId || !message) return res.status(400).json({ reply: 'Thiếu thông tin.' });
-    const reply = await askGemini('web_' + sessionId, message, 'web');
-    res.json({ reply });
+    const reply = await askAI('web_' + sessionId, message);
+    res.json({ reply: reply });
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ reply: 'Dạ hệ thống đang bận, Quý khách vui lòng thử lại sau ạ.' });
   }
 });
 
-// ===== CỬA CHO FACEBOOK: /webhook =====
 app.get('/webhook', (req, res) => {
   if (req.query['hub.verify_token'] === VERIFY_TOKEN) {
     res.send(req.query['hub.challenge']);
@@ -182,14 +190,14 @@ app.post('/webhook', async (req, res) => {
 
         if (hasAttachment) {
           if (text && text.trim().length > 0) {
-            await sendText(senderId, await askGemini(sid, text + ' (khách gửi kèm hình ảnh)', 'fb'));
+            await sendText(senderId, await askAI(sid, text + ' (khách gửi kèm hình ảnh)'));
           } else {
             await sendText(senderId, 'Dạ em đã nhận hình ảnh của Quý khách. Quý khách vui lòng cho em biết cần tư vấn gì về hình này ạ? Hoặc em xin chuyển nhân viên hỗ trợ ạ.');
           }
           continue;
         }
 
-        if (text) await sendText(senderId, await askGemini(sid, text, 'fb'));
+        if (text) await sendText(senderId, await askAI(sid, text));
       }
     }
     res.sendStatus(200);
@@ -199,4 +207,4 @@ app.post('/webhook', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Bot running on port ${PORT}`));
+app.listen(PORT, function() { console.log('Bot running on port ' + PORT); });
