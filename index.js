@@ -9,12 +9,19 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 const conversations = {};
 const lastSeen = {};
-const humanMode = {}; // senderId -> thời điểm chuyển sang người thật
+const humanMode = {};
 const MAX_HISTORY = 12;
-const RESET_GAP_MS = 6 * 60 * 60 * 1000;       // 6 tiếng: phiên mới, được chào lại
-const HUMAN_TAKEOVER_MS = 30 * 60 * 1000;      // 30 phút: bot nhường người thật
+const RESET_GAP_MS = 6 * 60 * 60 * 1000;
+const HUMAN_TAKEOVER_MS = 30 * 60 * 1000;
 
-const SYSTEM_PROMPT = `Bạn tên là Thuận, là nhân viên tư vấn (xưng "em") của Công ty Cổ phần Nhựa Chất Lượng Cao Bình Thuận (BQP) – thành viên Tập đoàn Nhựa Bình Thuận (BPG). Bạn am hiểu về gia công chi tiết nhựa kỹ thuật cao (OEM/ODM).
+const SYSTEM_PROMPT = `Bạn tên là Thuận (tên tiếng Anh: Thomas), nhân viên tư vấn của Công ty Cổ phần Nhựa Chất Lượng Cao Bình Thuận (BQP) – thành viên Tập đoàn Nhựa Bình Thuận (BPG). Bạn am hiểu về gia công chi tiết nhựa kỹ thuật cao (OEM/ODM).
+
+QUY TẮC NGÔN NGỮ (RẤT QUAN TRỌNG):
+- BQP hỗ trợ 6 ngôn ngữ: Tiếng Việt, Tiếng Anh, Tiếng Trung, Tiếng Thái, Tiếng Nhật, Tiếng Hàn.
+- Hãy TỰ ĐỘNG NHẬN DIỆN ngôn ngữ khách đang dùng và TRẢ LỜI BẰNG ĐÚNG NGÔN NGỮ ĐÓ một cách tự nhiên, chuẩn xác như người bản xứ.
+- Khách viết tiếng nào → trả lời tiếng đó. Nếu khách đổi ngôn ngữ giữa chừng, lập tức chuyển theo ngôn ngữ mới.
+- Xưng hô tiếng Việt: xưng "em", gọi "Quý khách / anh / chị". Ngôn ngữ khác: dùng cách xưng hô lịch sự, chuyên nghiệp phù hợp văn hóa nước đó.
+- Mọi thông tin sản phẩm, năng lực, liên hệ giữ nguyên ý nghĩa, chỉ dịch sang ngôn ngữ phù hợp.
 
 CẤU TRÚC HỆ SINH THÁI TẬP ĐOÀN NHỰA BÌNH THUẬN (BPG):
 A. SẢN XUẤT:
@@ -37,20 +44,20 @@ NĂNG LỰC:
 - Chứng nhận: ISO 9001:2015, IATF 16949:2016, Top VNR500.
 
 QUY TẮC DÙNG TỪ "GIA CÔNG" (RẤT QUAN TRỌNG):
-- CHỈ dùng từ "gia công" cho: chi tiết nhựa OEM/ODM, chi tiết nhựa kỹ thuật cao theo yêu cầu.
-- TUYỆT ĐỐI KHÔNG dùng từ "gia công" cho: pallet, thùng nhựa, thùng rác, chậu hoa, sản phẩm nông nghiệp, khuôn (mould). Đây là SAI. Không bao giờ nói "bên em gia công pallet/chậu/khuôn".
+- CHỈ dùng từ "gia công" (tiếng Anh: "manufacturing/processing on demand") cho: chi tiết nhựa OEM/ODM, chi tiết nhựa kỹ thuật cao theo yêu cầu.
+- TUYỆT ĐỐI KHÔNG dùng từ "gia công" cho: pallet, thùng nhựa, thùng rác, chậu hoa, sản phẩm nông nghiệp, khuôn (mould). Không bao giờ nói "bên em gia công pallet/chậu/khuôn".
 
-QUY TẮC TRẢ LỜI KHI KHÁCH HỎI VỀ: pallet, thùng nhựa, chậu, khuôn, logistics, tái chế, hoặc hệ sinh thái tổng thể:
-- Trả lời theo hướng: "BQP là thành viên thuộc Tập đoàn Nhựa Bình Thuận (BPG), hoạt động trong hệ sinh thái sản xuất và dịch vụ nhựa toàn diện..." rồi điều hướng khách về Fanpage Tập đoàn: https://www.facebook.com/nhuabinhthuan
-- Mẫu đúng: "Dạ, BQP là thành viên thuộc Tập đoàn Nhựa Bình Thuận (BPG). Hệ sinh thái BPG phát triển các nhóm sản phẩm công nghiệp, nông nghiệp cùng các dịch vụ OEM/ODM, khuôn mẫu, tái chế và logistics. Anh/chị tham khảo thêm tại Fanpage chính thức của Tập đoàn: https://www.facebook.com/nhuabinhthuan"
+QUY TẮC KHI KHÁCH HỎI VỀ: pallet, thùng nhựa, chậu, khuôn, logistics, tái chế, hoặc hệ sinh thái tổng thể:
+- Trả lời theo hướng: BQP là thành viên thuộc Tập đoàn Nhựa Bình Thuận (BPG), hoạt động trong hệ sinh thái sản xuất và dịch vụ nhựa toàn diện, rồi điều hướng khách về Fanpage Tập đoàn: https://www.facebook.com/nhuabinhthuan
+- Mẫu (tiếng Việt): "Dạ, BQP là thành viên thuộc Tập đoàn Nhựa Bình Thuận (BPG). Hệ sinh thái BPG phát triển các nhóm sản phẩm công nghiệp, nông nghiệp cùng các dịch vụ OEM/ODM, khuôn mẫu, tái chế và logistics. Anh/chị tham khảo thêm tại Fanpage chính thức của Tập đoàn: https://www.facebook.com/nhuabinhthuan"
 
 LIÊN HỆ:
 - Hotline 24/7: 1800 2228 | Email: info@nhuabinhthuan.com.vn | Website: bqp.com.vn
 - Nhà máy: Lô CN-03, KCN Đồng Văn IV, Phường Lê Hồ, Tỉnh Ninh Bình
 
 QUY TẮC GIAO TIẾP:
-- Xưng "em", tên Thuận. Dựa vào lịch sử để hiểu ngữ cảnh, không hỏi lại điều khách đã nói.
-- Lần đầu gọi "Quý khách". Sau đó TỰ SUY ĐOÁN gọi "anh"/"chị" dựa vào tên hoặc cách khách xưng. KHÔNG HỎI giới tính. Không đoán được thì dùng "Quý khách"/"mình".
+- Dựa vào lịch sử để hiểu ngữ cảnh, không hỏi lại điều khách đã nói.
+- Tiếng Việt: lần đầu gọi "Quý khách", sau đó TỰ SUY ĐOÁN gọi "anh"/"chị" dựa vào tên hoặc cách khách xưng. KHÔNG HỎI giới tính. Không đoán được thì dùng "Quý khách"/"mình".
 - Trả lời TỰ NHIÊN, thân thiện, NGẮN GỌN tối đa 2-3 câu.
 - Khi nói về đối tác: chỉ nói chung "doanh nghiệp lớn trong nước, FDI và quốc tế". KHÔNG nêu tên cụ thể.
 - Hỏi giá/số lượng/đặt hàng: mời liên hệ Hotline 1800 2228 hoặc email info@nhuabinhthuan.com.vn.
@@ -85,7 +92,7 @@ async function askGemini(senderId, userMessage) {
 
   const isNewSession = history.length === 0;
   const greetingRule = isNewSession
-    ? '\n\n[Hệ thống: Tin nhắn MỞ ĐẦU phiên mới. Hãy chào tự nhiên rồi trả lời.]'
+    ? '\n\n[Hệ thống: Tin nhắn MỞ ĐẦU phiên mới. Hãy chào tự nhiên (bằng đúng ngôn ngữ của khách) rồi trả lời.]'
     : '\n\n[Hệ thống: Cuộc trò chuyện đang TIẾP DIỄN. KHÔNG chào lại, trả lời thẳng nội dung.]';
 
   history.push({ role: 'user', parts: [{ text: userMessage }] });
@@ -93,12 +100,12 @@ async function askGemini(senderId, userMessage) {
 
   const contents = [
     { role: 'user', parts: [{ text: SYSTEM_PROMPT + greetingRule }] },
-    { role: 'model', parts: [{ text: 'Dạ vâng, em là Thuận, sẵn sàng hỗ trợ ạ.' }] },
+    { role: 'model', parts: [{ text: 'OK, tôi là Thuận/Thomas, sẵn sàng hỗ trợ đa ngôn ngữ.' }] },
     ...history
   ];
 
   const reply = await callGemini(contents);
-  const finalReply = reply || 'Dạ em xin lỗi, hệ thống đang bận. Quý khách vui lòng nhắn lại sau ít phút hoặc gọi Hotline 1800 2228 ạ.';
+  const finalReply = reply || 'Dạ em xin lỗi, hệ thống đang bận. Quý khách vui lòng nhắn lại sau ít phút hoặc gọi Hotline 1800 2228 ạ. / Sorry, the system is busy. Please try again or call Hotline 1800 2228.';
   if (reply) history.push({ role: 'model', parts: [{ text: reply }] });
   return finalReply;
 }
@@ -129,10 +136,10 @@ app.post('/webhook', async (req, res) => {
       const event = entry.messaging[0];
       if (!event) continue;
 
-      // 1) Tin nhắn do NHÂN VIÊN/TRANG gửi đi (echo) -> bật chế độ người thật, bot im 30 phút
+      // Nhân viên/Trang gửi tin (echo) -> bật chế độ người thật, bot im 30 phút
       if (event.message && event.message.is_echo) {
         const customerId = event.recipient.id;
-        if (!event.message.app_id) { // do người thật gõ tay, không phải app gửi
+        if (!event.message.app_id) {
           humanMode[customerId] = Date.now();
         }
         continue;
@@ -141,7 +148,7 @@ app.post('/webhook', async (req, res) => {
       const senderId = event.sender.id;
       if (!senderId) continue;
 
-      // 2) Đang trong chế độ người thật -> bot không trả lời
+      // Đang chế độ người thật -> bot không trả lời
       if (humanMode[senderId] && (Date.now() - humanMode[senderId] < HUMAN_TAKEOVER_MS)) {
         continue;
       }
@@ -150,27 +157,25 @@ app.post('/webhook', async (req, res) => {
         const text = event.message.text;
         const hasAttachment = event.message.attachments && event.message.attachments.length > 0;
 
-        // 3) Khách yêu cầu gặp người thật
-        if (text && /gặp (nhân viên|người|tư vấn viên thật)|người thật|nói chuyện với người|gặp ai đó/i.test(text)) {
+        // Khách yêu cầu gặp người thật (đa ngôn ngữ)
+        if (text && /gặp (nhân viên|người|tư vấn viên thật)|người thật|nói chuyện với người|talk to (a |an )?(human|agent|staff|person)|real person|live agent|真人|人工|客服|พนักงาน|担当者|オペレーター|상담원|상담사/i.test(text)) {
           humanMode[senderId] = Date.now();
-          await sendText(senderId, 'Dạ vâng, em sẽ chuyển cuộc trò chuyện tới nhân viên tư vấn của BQP. Anh/chị vui lòng chờ trong giây lát, hoặc gọi ngay Hotline 1800 2228 để được hỗ trợ nhanh nhất ạ.');
+          await sendText(senderId, 'Dạ vâng, em sẽ chuyển cuộc trò chuyện tới nhân viên tư vấn của BQP, anh/chị vui lòng chờ trong giây lát hoặc gọi Hotline 1800 2228 ạ.\n\nWe are connecting you to a BQP staff member. Please wait a moment, or call Hotline 1800 2228 for immediate support.');
           continue;
         }
 
-        // 4) Khách gửi ẢNH/FILE
+        // Khách gửi ẢNH/FILE
         if (hasAttachment) {
           if (text && text.trim().length > 0) {
-            // ảnh có kèm chữ -> trả lời theo chữ
             const reply = await askGemini(senderId, text + ' (khách có gửi kèm hình ảnh/tệp)');
             await sendText(senderId, reply);
           } else {
-            // ảnh không kèm chữ -> hỏi lại
-            await sendText(senderId, 'Dạ em đã nhận được hình ảnh của Quý khách. Quý khách vui lòng cho em biết cần tư vấn gì về hình này ạ (ví dụ: loại chi tiết nhựa, số lượng, yêu cầu kỹ thuật)? Hoặc nếu cần, em xin chuyển nhân viên hỗ trợ trực tiếp ạ.');
+            await sendText(senderId, 'Dạ em đã nhận được hình ảnh của Quý khách. Quý khách vui lòng cho em biết cần tư vấn gì về hình này ạ (loại chi tiết nhựa, số lượng, yêu cầu kỹ thuật)? Hoặc em xin chuyển nhân viên hỗ trợ trực tiếp ạ.\n\nWe received your image. Could you please tell us what you need regarding this image (product type, quantity, technical requirements)? Or we can connect you to our staff.');
           }
           continue;
         }
 
-        // 5) Tin nhắn văn bản bình thường -> bot trả lời
+        // Tin nhắn văn bản -> bot trả lời
         if (text) {
           const reply = await askGemini(senderId, text);
           await sendText(senderId, reply);
