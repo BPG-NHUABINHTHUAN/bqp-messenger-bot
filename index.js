@@ -3,6 +3,15 @@ const axios = require('axios');
 const app = express();
 app.use(express.json());
 
+// Cho phép website gọi tới server (CORS)
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -44,12 +53,11 @@ NĂNG LỰC:
 - Chứng nhận: ISO 9001:2015, IATF 16949:2016, Top VNR500.
 
 QUY TẮC DÙNG TỪ "GIA CÔNG" (RẤT QUAN TRỌNG):
-- CHỈ dùng từ "gia công" (tiếng Anh: "manufacturing/processing on demand") cho: chi tiết nhựa OEM/ODM, chi tiết nhựa kỹ thuật cao theo yêu cầu.
+- CHỈ dùng từ "gia công" cho: chi tiết nhựa OEM/ODM, chi tiết nhựa kỹ thuật cao theo yêu cầu.
 - TUYỆT ĐỐI KHÔNG dùng từ "gia công" cho: pallet, thùng nhựa, thùng rác, chậu hoa, sản phẩm nông nghiệp, khuôn (mould). Không bao giờ nói "bên em gia công pallet/chậu/khuôn".
 
 QUY TẮC KHI KHÁCH HỎI VỀ: pallet, thùng nhựa, chậu, khuôn, logistics, tái chế, hoặc hệ sinh thái tổng thể:
 - Trả lời theo hướng: BQP là thành viên thuộc Tập đoàn Nhựa Bình Thuận (BPG), hoạt động trong hệ sinh thái sản xuất và dịch vụ nhựa toàn diện, rồi điều hướng khách về Fanpage Tập đoàn: https://www.facebook.com/nhuabinhthuan
-- Mẫu (tiếng Việt): "Dạ, BQP là thành viên thuộc Tập đoàn Nhựa Bình Thuận (BPG). Hệ sinh thái BPG phát triển các nhóm sản phẩm công nghiệp, nông nghiệp cùng các dịch vụ OEM/ODM, khuôn mẫu, tái chế và logistics. Anh/chị tham khảo thêm tại Fanpage chính thức của Tập đoàn: https://www.facebook.com/nhuabinhthuan"
 
 LIÊN HỆ:
 - Hotline 24/7: 1800 2228 | Email: info@nhuabinhthuan.com.vn | Website: bqp.com.vn
@@ -81,18 +89,18 @@ async function callGemini(contents) {
   }
 }
 
-async function askGemini(senderId, userMessage) {
+async function askGemini(sessionId, userMessage, channel) {
   const now = Date.now();
-  const gap = lastSeen[senderId] ? (now - lastSeen[senderId]) : Infinity;
-  lastSeen[senderId] = now;
+  const gap = lastSeen[sessionId] ? (now - lastSeen[sessionId]) : Infinity;
+  lastSeen[sessionId] = now;
 
-  if (gap > RESET_GAP_MS) conversations[senderId] = [];
-  if (!conversations[senderId]) conversations[senderId] = [];
-  const history = conversations[senderId];
+  if (gap > RESET_GAP_MS) conversations[sessionId] = [];
+  if (!conversations[sessionId]) conversations[sessionId] = [];
+  const history = conversations[sessionId];
 
   const isNewSession = history.length === 0;
   const greetingRule = isNewSession
-    ? '\n\n[Hệ thống: Tin nhắn MỞ ĐẦU phiên mới. Hãy chào tự nhiên (bằng đúng ngôn ngữ của khách) rồi trả lời.]'
+    ? '\n\n[Hệ thống: Tin nhắn MỞ ĐẦU phiên mới. Hãy chào tự nhiên (đúng ngôn ngữ khách) rồi trả lời.]'
     : '\n\n[Hệ thống: Cuộc trò chuyện đang TIẾP DIỄN. KHÔNG chào lại, trả lời thẳng nội dung.]';
 
   history.push({ role: 'user', parts: [{ text: userMessage }] });
@@ -105,7 +113,7 @@ async function askGemini(senderId, userMessage) {
   ];
 
   const reply = await callGemini(contents);
-  const finalReply = reply || 'Dạ em xin lỗi, hệ thống đang bận. Quý khách vui lòng nhắn lại sau ít phút hoặc gọi Hotline 1800 2228 ạ. / Sorry, the system is busy. Please try again or call Hotline 1800 2228.';
+  const finalReply = reply || 'Dạ em xin lỗi, hệ thống đang bận. Quý khách vui lòng thử lại sau ít phút hoặc gọi Hotline 1800 2228 ạ.';
   if (reply) history.push({ role: 'model', parts: [{ text: reply }] });
   return finalReply;
 }
@@ -121,6 +129,20 @@ async function sendText(senderId, text) {
   }
 }
 
+// ===== CỬA CHO WEBSITE: /chat =====
+app.post('/chat', async (req, res) => {
+  try {
+    const { sessionId, message } = req.body;
+    if (!sessionId || !message) return res.status(400).json({ reply: 'Thiếu thông tin.' });
+    const reply = await askGemini('web_' + sessionId, message, 'web');
+    res.json({ reply });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ reply: 'Dạ hệ thống đang bận, Quý khách vui lòng thử lại sau ạ.' });
+  }
+});
+
+// ===== CỬA CHO FACEBOOK: /webhook =====
 app.get('/webhook', (req, res) => {
   if (req.query['hub.verify_token'] === VERIFY_TOKEN) {
     res.send(req.query['hub.challenge']);
@@ -136,50 +158,38 @@ app.post('/webhook', async (req, res) => {
       const event = entry.messaging[0];
       if (!event) continue;
 
-      // Nhân viên/Trang gửi tin (echo) -> bật chế độ người thật, bot im 30 phút
       if (event.message && event.message.is_echo) {
         const customerId = event.recipient.id;
-        if (!event.message.app_id) {
-          humanMode[customerId] = Date.now();
-        }
+        if (!event.message.app_id) humanMode['fb_' + customerId] = Date.now();
         continue;
       }
 
       const senderId = event.sender.id;
       if (!senderId) continue;
+      const sid = 'fb_' + senderId;
 
-      // Đang chế độ người thật -> bot không trả lời
-      if (humanMode[senderId] && (Date.now() - humanMode[senderId] < HUMAN_TAKEOVER_MS)) {
-        continue;
-      }
+      if (humanMode[sid] && (Date.now() - humanMode[sid] < HUMAN_TAKEOVER_MS)) continue;
 
       if (event.message) {
         const text = event.message.text;
         const hasAttachment = event.message.attachments && event.message.attachments.length > 0;
 
-        // Khách yêu cầu gặp người thật (đa ngôn ngữ)
-        if (text && /gặp (nhân viên|người|tư vấn viên thật)|người thật|nói chuyện với người|talk to (a |an )?(human|agent|staff|person)|real person|live agent|真人|人工|客服|พนักงาน|担当者|オペレーター|상담원|상담사/i.test(text)) {
-          humanMode[senderId] = Date.now();
-          await sendText(senderId, 'Dạ vâng, em sẽ chuyển cuộc trò chuyện tới nhân viên tư vấn của BQP, anh/chị vui lòng chờ trong giây lát hoặc gọi Hotline 1800 2228 ạ.\n\nWe are connecting you to a BQP staff member. Please wait a moment, or call Hotline 1800 2228 for immediate support.');
+        if (text && /gặp (nhân viên|người|tư vấn viên thật)|người thật|talk to (a |an )?(human|agent|staff|person)|real person|真人|人工|客服|พนักงาน|担当者|상담원/i.test(text)) {
+          humanMode[sid] = Date.now();
+          await sendText(senderId, 'Dạ vâng, em sẽ chuyển tới nhân viên tư vấn BQP, anh/chị vui lòng chờ hoặc gọi Hotline 1800 2228 ạ.');
           continue;
         }
 
-        // Khách gửi ẢNH/FILE
         if (hasAttachment) {
           if (text && text.trim().length > 0) {
-            const reply = await askGemini(senderId, text + ' (khách có gửi kèm hình ảnh/tệp)');
-            await sendText(senderId, reply);
+            await sendText(senderId, await askGemini(sid, text + ' (khách gửi kèm hình ảnh)', 'fb'));
           } else {
-            await sendText(senderId, 'Dạ em đã nhận được hình ảnh của Quý khách. Quý khách vui lòng cho em biết cần tư vấn gì về hình này ạ (loại chi tiết nhựa, số lượng, yêu cầu kỹ thuật)? Hoặc em xin chuyển nhân viên hỗ trợ trực tiếp ạ.\n\nWe received your image. Could you please tell us what you need regarding this image (product type, quantity, technical requirements)? Or we can connect you to our staff.');
+            await sendText(senderId, 'Dạ em đã nhận hình ảnh của Quý khách. Quý khách vui lòng cho em biết cần tư vấn gì về hình này ạ? Hoặc em xin chuyển nhân viên hỗ trợ ạ.');
           }
           continue;
         }
 
-        // Tin nhắn văn bản -> bot trả lời
-        if (text) {
-          const reply = await askGemini(senderId, text);
-          await sendText(senderId, reply);
-        }
+        if (text) await sendText(senderId, await askGemini(sid, text, 'fb'));
       }
     }
     res.sendStatus(200);
